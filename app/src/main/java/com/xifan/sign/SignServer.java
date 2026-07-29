@@ -322,18 +322,35 @@ public class SignServer {
 
             boolean isSig3 = "sig3".equalsIgnoreCase(kind) || url.contains("/rest/e/tube/inspire");
 
-            Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
-            if (kSecCls != null) {
-                Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
-                atlasSign.setAccessible(true);
-                Object sigObj = atlasSign.invoke(null, sigInput);
-                String sig = sigObj != null ? sigObj.toString() : "";
-                if (sig.length() > 0) {
-                    if (isSig3) {
-                        headers.put("Ks-Sig3", sig);
-                    } else {
-                        headers.put("Ks-Sig1", sig);
-                    }
+            try {
+                Class<?> sigUtilsCls = findClass("com.kwai.theater.utility.SignatureUtils");
+                if (sigUtilsCls != null && ctx != null) {
+                    Method getSignMd5 = sigUtilsCls.getDeclaredMethod("getSignMd5Str", Context.class);
+                    getSignMd5.setAccessible(true);
+                    Object md5Obj = getSignMd5.invoke(null, ctx);
+                    String md5 = md5Obj != null ? md5Obj.toString() : "";
+                    String pkgId = ctx.getPackageName() + md5;
+                    if (pkgId.length() > 0) headers.put("Ks-PkgId", pkgId);
+                }
+            } catch (Exception ignored) {}
+
+            if (isSig3) {
+                Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
+                if (kSecCls != null) {
+                    Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
+                    atlasSign.setAccessible(true);
+                    Object sigObj = atlasSign.invoke(null, sigInput);
+                    String sig = sigObj != null ? sigObj.toString() : "";
+                    if (sig.length() > 0) headers.put("Ks-Sig3", sig);
+                }
+            } else {
+                Class<?> sig1Cls = findClass("com.yxcorp.kuaishou.addfp.KWEGIDDFP");
+                if (sig1Cls != null) {
+                    Method doSign = sig1Cls.getDeclaredMethod("doSign", Context.class, String.class);
+                    doSign.setAccessible(true);
+                    Object sig1Obj = doSign.invoke(null, ctx, sigInput);
+                    String sig1 = sig1Obj != null ? sig1Obj.toString() : "";
+                    if (sig1.length() > 0) headers.put("Ks-Sig1", sig1);
                 }
             }
 
