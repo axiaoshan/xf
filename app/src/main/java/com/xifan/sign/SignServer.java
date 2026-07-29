@@ -1,6 +1,5 @@
 package com.xifan.sign;
 
-import android.app.ActivityThread;
 import android.content.Context;
 
 import org.json.JSONObject;
@@ -90,7 +89,13 @@ public class SignServer {
     }
 
     private static Context getContext() {
-        return ActivityThread.currentApplication().getApplicationContext();
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            Method m = at.getDeclaredMethod("currentApplication");
+            return ((Context) m.invoke(null)).getApplicationContext();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private static Class<?> findClass(String name) {
