@@ -1,6 +1,8 @@
 package com.xifan.sign;
 
 import android.content.Context;
+import android.net.Uri;
+import android.text.TextUtils;
 
 import org.json.JSONObject;
 
@@ -9,10 +11,10 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -109,6 +111,18 @@ public class SignServer {
         }
     }
 
+    private static String generateSigInput(String url, String body) {
+        Uri uri = Uri.parse(url);
+        String path = uri.getPath();
+        String query = uri.getQuery();
+        if (TextUtils.isEmpty(query)) {
+            return path + "&&" + body;
+        }
+        String[] params = query.split("&");
+        Arrays.sort(params);
+        return path + "&" + TextUtils.join("&", params) + "&" + body;
+    }
+
     private static String health() {
         try {
             Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
@@ -150,14 +164,23 @@ public class SignServer {
             Context ctx = getContext();
             HashMap<String, String> headers = new HashMap<>();
 
-            Class<?> encCls = findClass("com.kwai.theater.framework.network.core.encrypt.EncryptHelper");
+            try {
+                Class<?> sigUtilsCls = findClass("com.kwai.theater.utility.SignatureUtils");
+                if (sigUtilsCls != null && ctx != null) {
+                    Method getSignMd5 = sigUtilsCls.getDeclaredMethod("getSignMd5Str", Context.class);
+                    getSignMd5.setAccessible(true);
+                    Object md5Obj = getSignMd5.invoke(null, ctx);
+                    String md5 = md5Obj != null ? md5Obj.toString() : "";
+                    String pkgId = ctx.getPackageName() + md5;
+                    if (pkgId.length() > 0) headers.put("Ks-PkgId", pkgId);
+                }
+            } catch (Exception ignored) {}
+
+            headers.put("Ks-Encoding", "2");
+
+            String sigInput = generateSigInput(url, body);
+
             Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
-
-            if (encCls != null) {
-                Method addHeaders = encCls.getDeclaredMethod("addHeaderParams", Map.class);
-                addHeaders.invoke(null, headers);
-            }
-
             if (weaponCls != null) {
                 Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
                 Object kawObj = gMethod.invoke(null, ctx);
@@ -175,9 +198,26 @@ public class SignServer {
                 } catch (Exception ignored) {}
             }
 
-            if (encCls != null) {
-                Method sigMethod = encCls.getDeclaredMethod("sigRequest", String.class, Map.class, String.class);
-                sigMethod.invoke(null, url, headers, body);
+            boolean isSig3 = url.contains("/rest/e/tube/inspire");
+
+            if (isSig3) {
+                Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
+                if (kSecCls != null) {
+                    Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
+                    atlasSign.setAccessible(true);
+                    Object sigObj = atlasSign.invoke(null, sigInput);
+                    String sig = sigObj != null ? sigObj.toString() : "";
+                    if (sig.length() > 0) headers.put("Ks-Sig3", sig);
+                }
+            } else {
+                Class<?> sig1Cls = findClass("com.yxcorp.kuaishou.addfp.KWEGIDDFP");
+                if (sig1Cls != null) {
+                    Method doSign = sig1Cls.getDeclaredMethod("doSign", Context.class, String.class);
+                    doSign.setAccessible(true);
+                    Object sig1Obj = doSign.invoke(null, ctx, sigInput);
+                    String sig1 = sig1Obj != null ? sig1Obj.toString() : "";
+                    if (sig1.length() > 0) headers.put("Ks-Sig1", sig1);
+                }
             }
 
             JSONObject result = new JSONObject();
