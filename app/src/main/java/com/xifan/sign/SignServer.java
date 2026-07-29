@@ -164,11 +164,14 @@ public class SignServer {
             Context ctx = getContext();
             HashMap<String, String> headers = new HashMap<>();
 
-            headers.put("Ks-Encoding", "2");
-
-            String sigInput = generateSigInput(url, body);
-
+            Class<?> encCls = findClass("com.kwai.theater.framework.network.core.encrypt.EncryptHelper");
             Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
+
+            if (encCls != null) {
+                Method addHeaders = encCls.getDeclaredMethod("addHeaderParams", Map.class);
+                addHeaders.invoke(null, headers);
+            }
+
             if (weaponCls != null) {
                 Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
                 Object kawObj = gMethod.invoke(null, ctx);
@@ -186,28 +189,9 @@ public class SignServer {
                 } catch (Exception ignored) {}
             }
 
-            boolean isSig3 = url.contains("/rest/e/tube/inspire");
-
-            if (isSig3) {
-                Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
-                if (kSecCls != null) {
-                    Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
-                    atlasSign.setAccessible(true);
-                    Object sig3Obj = atlasSign.invoke(null, sigInput);
-                    String sig3 = sig3Obj != null ? sig3Obj.toString() : "";
-                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] sig3 sigInput=" + sigInput.substring(0, Math.min(sigInput.length(), 80)) + " result=" + sig3.substring(0, Math.min(sig3.length(), 40)));
-                    if (sig3.length() > 0) headers.put("Ks-Sig3", sig3);
-                }
-            } else {
-                Class<?> sig1Cls = findClass("com.yxcorp.kuaishou.addfp.KWEGIDDFP");
-                if (sig1Cls != null) {
-                    Method doSign = sig1Cls.getDeclaredMethod("doSign", Context.class, String.class);
-                    doSign.setAccessible(true);
-                    Object sig1Obj = doSign.invoke(null, ctx, sigInput);
-                    String sig1 = sig1Obj != null ? sig1Obj.toString() : "";
-                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] sig1 sigInput=" + sigInput.substring(0, Math.min(sigInput.length(), 80)) + " result=" + sig1.substring(0, Math.min(sig1.length(), 40)) + " len=" + sig1.length());
-                    if (sig1.length() > 0) headers.put("Ks-Sig1", sig1);
-                }
+            if (encCls != null) {
+                Method sigMethod = encCls.getDeclaredMethod("sigRequest", String.class, Map.class, String.class);
+                sigMethod.invoke(null, url, headers, body);
             }
 
             JSONObject result = new JSONObject();
@@ -216,8 +200,6 @@ public class SignServer {
                 hdrObj.put(entry.getKey(), entry.getValue() != null ? entry.getValue() : "");
             }
             result.put("headers", hdrObj);
-            result.put("debug_sigInput", sigInput.length() > 100 ? sigInput.substring(0, 100) : sigInput);
-            result.put("debug_isSig3", isSig3);
             return result.toString();
         } catch (Exception e) {
             StringWriter sw = new StringWriter();
