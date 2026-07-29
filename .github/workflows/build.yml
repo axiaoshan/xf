@@ -23,12 +23,11 @@ jobs:
         gradle-version: '8.2'
 
     - name: Build Debug APK
-      working-directory: XifanSignModule
       run: gradle --no-daemon -Dorg.gradle.jvmargs="-Xmx2048m" assembleDebug --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: XifanSign-debug
-        path: XifanSignModule/app/build/outputs/apk/debug/*.apk
+        path: app/build/outputs/apk/debug/*.apk
         retention-days: 30
