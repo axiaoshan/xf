@@ -24,14 +24,14 @@ public class SignServer {
         running = true;
         new Thread(() -> {
             try {
-                server = new ServerSocket(PORT);
-                System.out.println("[xifan-sign] http://127.0.0.1:" + PORT);
+                server = new ServerSocket(PORT, 50, java.net.InetAddress.getByName("0.0.0.0"));
+                de.robv.android.xposed.XposedBridge.log("[xifan-sign] HTTP 服务已启动: http://0.0.0.0:" + PORT);
                 while (running) {
                     Socket client = server.accept();
                     handleClient(client);
                 }
             } catch (Exception e) {
-                System.out.println("[xifan-sign] 服务异常: " + e);
+                de.robv.android.xposed.XposedBridge.log("[xifan-sign] 服务异常: " + e);
             }
         }, "xifan-sign-server").start();
     }
