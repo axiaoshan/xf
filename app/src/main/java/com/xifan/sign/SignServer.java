@@ -293,6 +293,7 @@ public class SignServer {
             JSONObject req = new JSONObject(bodyJson);
             String url = req.optString("url", "");
             String body = req.optString("body", "");
+            String kind = req.optString("kind", "");
 
             Context ctx = getContext();
             HashMap<String, String> headers = new HashMap<>();
@@ -319,6 +320,8 @@ public class SignServer {
                 } catch (Exception ignored) {}
             }
 
+            boolean isSig3 = "sig3".equalsIgnoreCase(kind) || url.contains("/rest/e/tube/inspire");
+
             Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
             if (kSecCls != null) {
                 Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
@@ -326,7 +329,7 @@ public class SignServer {
                 Object sigObj = atlasSign.invoke(null, sigInput);
                 String sig = sigObj != null ? sigObj.toString() : "";
                 if (sig.length() > 0) {
-                    if (url.contains("/rest/e/tube/inspire")) {
+                    if (isSig3) {
                         headers.put("Ks-Sig3", sig);
                     } else {
                         headers.put("Ks-Sig1", sig);
