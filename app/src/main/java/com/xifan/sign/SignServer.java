@@ -129,7 +129,6 @@ public class SignServer {
             Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
 
             boolean kSecReady = false;
-            boolean wCtxReady = false;
             String kaw = "";
 
             if (kSecCls != null) {
@@ -137,25 +136,19 @@ public class SignServer {
                 kSecReady = (boolean) isInit.invoke(null);
             }
 
-            if (weaponCls != null) {
-                java.lang.reflect.Field ctxField = weaponCls.getDeclaredField("mContext");
-                ctxField.setAccessible(true);
-                Context wCtx = (Context) ctxField.get(null);
-                wCtxReady = wCtx != null;
-
-                if (kSecReady && wCtxReady) {
-                    try {
-                        Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
-                        kaw = (String) gMethod.invoke(null, wCtx);
-                    } catch (Exception ignored) {}
-                }
+            Context ctx = getContext();
+            if (kSecReady && ctx != null && weaponCls != null) {
+                try {
+                    Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
+                    Object kawObj = gMethod.invoke(null, ctx);
+                    kaw = kawObj != null ? kawObj.toString() : "";
+                } catch (Exception ignored) {}
             }
 
             JSONObject obj = new JSONObject();
-            obj.put("ready", kSecReady && wCtxReady);
+            obj.put("ready", kSecReady && kaw.length() > 0);
             obj.put("kSecurity", kSecReady);
-            obj.put("weaponCtx", wCtxReady);
-            obj.put("kaw", kaw != null ? kaw : "");
+            obj.put("kaw", kaw);
             return obj.toString();
         } catch (Exception e) {
             return jsonError(500, "health error: " + e);
