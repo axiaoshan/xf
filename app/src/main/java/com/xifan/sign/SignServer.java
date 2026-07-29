@@ -216,6 +216,8 @@ public class SignServer {
                 hdrObj.put(entry.getKey(), entry.getValue() != null ? entry.getValue() : "");
             }
             result.put("headers", hdrObj);
+            result.put("debug_sigInput", sigInput.length() > 100 ? sigInput.substring(0, 100) : sigInput);
+            result.put("debug_isSig3", isSig3);
             return result.toString();
         } catch (Exception e) {
             StringWriter sw = new StringWriter();
