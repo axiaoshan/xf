@@ -7,6 +7,8 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -106,6 +108,20 @@ public class SignServer {
         }
     }
 
+    private static Object waitForService(String providerClass, String methodName) {
+        try {
+            Class<?> spCls = findClass("com.kwai.theater.framework.core.service.ServiceProvider");
+            if (spCls == null) return null;
+            Method getMethod = spCls.getDeclaredMethod(methodName, Class.class);
+            for (int i = 0; i < 30; i++) {
+                Object obj = getMethod.invoke(null, findClass(providerClass));
+                if (obj != null) return obj;
+                Thread.sleep(1000);
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
     private static String health() {
         try {
             Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
@@ -134,14 +150,21 @@ public class SignServer {
                 }
             }
 
+            Object secProvider = null;
+            try {
+                secProvider = waitForService(
+                    "com.kwai.theater.framework.core.service.provider.SecurityProvider", "get");
+            } catch (Exception ignored) {}
+
             JSONObject obj = new JSONObject();
-            obj.put("ready", kSecReady && wCtxReady);
+            obj.put("ready", kSecReady && wCtxReady && secProvider != null);
             obj.put("kSecurity", kSecReady);
             obj.put("weaponCtx", wCtxReady);
+            obj.put("securityProvider", secProvider != null);
             obj.put("kaw", kaw != null ? kaw : "");
             return obj.toString();
         } catch (Exception e) {
-            return jsonError(500, "health error: " + e.getMessage());
+            return jsonError(500, "health error: " + e);
         }
     }
 
@@ -164,14 +187,16 @@ public class SignServer {
 
             if (weaponCls != null) {
                 Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
-                String kaw = (String) gMethod.invoke(null, ctx);
-                if (kaw != null) headers.put("Kaw", kaw);
+                Object kawObj = gMethod.invoke(null, ctx);
+                String kaw = kawObj != null ? kawObj.toString() : "";
+                if (kaw.length() > 0) headers.put("Kaw", kaw);
 
                 try {
                     Method aMethod = weaponCls.getDeclaredMethod("a", String.class, String.class);
                     aMethod.setAccessible(true);
-                    String kas = (String) aMethod.invoke(null, url + kaw, "");
-                    if (kas != null && kas.length() > 0) {
+                    Object kasObj = aMethod.invoke(null, url + kaw, "");
+                    String kas = kasObj != null ? kasObj.toString() : "";
+                    if (kas.length() > 0) {
                         headers.put("kas", kas);
                     }
                 } catch (Exception ignored) {}
@@ -190,7 +215,9 @@ public class SignServer {
             result.put("headers", hdrObj);
             return result.toString();
         } catch (Exception e) {
-            return jsonError(500, "sign error: " + e.getMessage());
+            StringWriter sw = new StringWriter();
+            e.printStackTrace(new PrintWriter(sw));
+            return jsonError(500, "sign error: " + sw.toString());
         }
     }
 
@@ -210,7 +237,7 @@ public class SignServer {
             }
             return jsonError(500, "EncryptHelper not found");
         } catch (Exception e) {
-            return jsonError(500, "encrypt error: " + e.getMessage());
+            return jsonError(500, "encrypt error: " + e);
         }
     }
 
@@ -230,11 +257,11 @@ public class SignServer {
             }
             return jsonError(500, "EncryptHelper not found");
         } catch (Exception e) {
-            return jsonError(500, "decrypt error: " + e.getMessage());
+            return jsonError(500, "decrypt error: " + e);
         }
     }
 
     private static String jsonError(int code, String msg) {
-        return "{\"error\":\"" + msg.replace("\"", "\\\"") + "\"}";
+        return "{\"error\":\"" + msg.replace("\"", "\\\"").replace("\n", " ") + "\"}";
     }
 }
