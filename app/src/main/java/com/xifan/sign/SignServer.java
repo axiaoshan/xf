@@ -1,6 +1,8 @@
 package com.xifan.sign;
 
 import android.content.Context;
+import android.net.Uri;
+import android.text.TextUtils;
 
 import org.json.JSONObject;
 
@@ -12,6 +14,7 @@ import java.io.StringWriter;
 import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -27,13 +30,13 @@ public class SignServer {
         new Thread(() -> {
             try {
                 server = new ServerSocket(PORT, 50, java.net.InetAddress.getByName("0.0.0.0"));
-                de.robv.android.xposed.XposedBridge.log("[xifan-sign] HTTP 服务已启动: http://0.0.0.0:" + PORT);
+                de.robv.android.xposed.XposedBridge.log("[xifan-sign] http://0.0.0.0:" + PORT);
                 while (running) {
                     Socket client = server.accept();
                     handleClient(client);
                 }
             } catch (Exception e) {
-                de.robv.android.xposed.XposedBridge.log("[xifan-sign] 服务异常: " + e);
+                de.robv.android.xposed.XposedBridge.log("[xifan-sign] error: " + e);
             }
         }, "xifan-sign-server").start();
     }
@@ -108,18 +111,16 @@ public class SignServer {
         }
     }
 
-    private static Object waitForService(String providerClass, String methodName) {
-        try {
-            Class<?> spCls = findClass("com.kwai.theater.framework.core.service.ServiceProvider");
-            if (spCls == null) return null;
-            Method getMethod = spCls.getDeclaredMethod(methodName, Class.class);
-            for (int i = 0; i < 30; i++) {
-                Object obj = getMethod.invoke(null, findClass(providerClass));
-                if (obj != null) return obj;
-                Thread.sleep(1000);
-            }
-        } catch (Exception ignored) {}
-        return null;
+    private static String generateSigInput(String url, String body) {
+        Uri uri = Uri.parse(url);
+        String path = uri.getPath();
+        String query = uri.getQuery();
+        if (TextUtils.isEmpty(query)) {
+            return path + "&&" + body;
+        }
+        String[] params = query.split("&");
+        Arrays.sort(params);
+        return path + "&" + TextUtils.join("&", params) + "&" + body;
     }
 
     private static String health() {
@@ -150,17 +151,10 @@ public class SignServer {
                 }
             }
 
-            Object secProvider = null;
-            try {
-                secProvider = waitForService(
-                    "com.kwai.theater.framework.core.service.provider.SecurityProvider", "get");
-            } catch (Exception ignored) {}
-
             JSONObject obj = new JSONObject();
-            obj.put("ready", kSecReady && wCtxReady && secProvider != null);
+            obj.put("ready", kSecReady && wCtxReady);
             obj.put("kSecurity", kSecReady);
             obj.put("weaponCtx", wCtxReady);
-            obj.put("securityProvider", secProvider != null);
             obj.put("kaw", kaw != null ? kaw : "");
             return obj.toString();
         } catch (Exception e) {
@@ -177,14 +171,11 @@ public class SignServer {
             Context ctx = getContext();
             HashMap<String, String> headers = new HashMap<>();
 
-            Class<?> encCls = findClass("com.kwai.theater.framework.network.core.encrypt.EncryptHelper");
+            headers.put("Ks-Encoding", "2");
+
+            String sigInput = generateSigInput(url, body);
+
             Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
-
-            if (encCls != null) {
-                Method addHeaders = encCls.getDeclaredMethod("addHeaderParams", Map.class);
-                addHeaders.invoke(null, headers);
-            }
-
             if (weaponCls != null) {
                 Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
                 Object kawObj = gMethod.invoke(null, ctx);
@@ -202,9 +193,24 @@ public class SignServer {
                 } catch (Exception ignored) {}
             }
 
-            if (encCls != null) {
-                Method sigMethod = encCls.getDeclaredMethod("sigRequest", String.class, Map.class, String.class);
-                sigMethod.invoke(null, url, headers, body);
+            boolean isSig3 = url.contains("/rest/e/tube/inspire");
+
+            if (isSig3) {
+                Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
+                if (kSecCls != null) {
+                    Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
+                    atlasSign.setAccessible(true);
+                    Object sig3Obj = atlasSign.invoke(null, sigInput);
+                    if (sig3Obj != null) headers.put("Ks-Sig3", sig3Obj.toString());
+                }
+            } else {
+                Class<?> sig1Cls = findClass("com.yxcorp.kuaishou.addfp.KWEGIDDFP");
+                if (sig1Cls != null) {
+                    Method doSign = sig1Cls.getDeclaredMethod("doSign", Context.class, String.class);
+                    doSign.setAccessible(true);
+                    Object sig1Obj = doSign.invoke(null, ctx, sigInput);
+                    if (sig1Obj != null) headers.put("Ks-Sig1", sig1Obj.toString());
+                }
             }
 
             JSONObject result = new JSONObject();
@@ -262,6 +268,6 @@ public class SignServer {
     }
 
     private static String jsonError(int code, String msg) {
-        return "{\"error\":\"" + msg.replace("\"", "\\\"").replace("\n", " ") + "\"}";
+        return "{\"error\":\"" + msg.replace("\"", "\\\"").replace("\n", " ").replace("\r", "") + "\"}";
     }
 }
