@@ -1,7 +1,5 @@
 package com.xifan.sign;
 
-import android.content.Context;
-
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedHelpers;
@@ -16,7 +14,7 @@ public class XifanSignHook implements IXposedHookLoadPackage {
         if (!TARGET_PKG.equals(lpparam.packageName)) return;
 
         XposedHelpers.findAndHookMethod(
-            "android.app.Application",
+            "com.kwai.theater.KSApplication",
             lpparam.classLoader,
             "onCreate",
             new XC_MethodHook() {
