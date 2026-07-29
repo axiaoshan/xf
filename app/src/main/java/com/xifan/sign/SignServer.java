@@ -237,6 +237,12 @@ public class SignServer {
     }
 
     private static String jsonError(int code, String msg) {
-        return "{\"error\":\"" + msg.replace("\"", "\\\"").replace("\n", " ").replace("\r", "") + "\"}";
+        try {
+            JSONObject obj = new JSONObject();
+            obj.put("error", msg);
+            return obj.toString();
+        } catch (Exception e) {
+            return "{\"error\":\"error\"}";
+        }
     }
 }
