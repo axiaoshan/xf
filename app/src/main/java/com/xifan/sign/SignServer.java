@@ -1,6 +1,8 @@
 package com.xifan.sign;
 
 import android.content.Context;
+import android.net.Uri;
+import android.text.TextUtils;
 
 import org.json.JSONObject;
 
@@ -9,10 +11,10 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -21,7 +23,6 @@ public class SignServer {
     private static final int PORT = 2357;
     private static ServerSocket server;
     private static boolean running = false;
-    private static boolean providersRegistered = false;
 
     public static void start() {
         if (running) return;
@@ -110,54 +111,16 @@ public class SignServer {
         }
     }
 
-    private static void ensureProviders() {
-        if (providersRegistered) return;
-        providersRegistered = true;
-        try {
-            Class<?> spCls = findClass("com.kwai.theater.framework.core.service.ServiceProvider");
-            Method putMethod = spCls.getDeclaredMethod("put", Class.class, Object.class);
-
-            String[] implClasses = {
-                "com.kwai.theater.component.base.core.KsAdSDKInit$KsAdContextImpl",
-                "com.kwai.theater.component.base.core.KsAdSDKInit$SecurityProviderImpl",
-                "com.kwai.theater.component.base.core.KsAdSDKInit$SdkConfigImpl",
-            };
-            String[] ifaceNames = {
-                "com.kwai.theater.framework.core.service.provider.KsAdContext",
-                "com.kwai.theater.framework.core.service.provider.SecurityProvider",
-                "com.kwai.theater.framework.core.service.provider.SdkConfigProvider",
-            };
-
-            for (int i = 0; i < implClasses.length; i++) {
-                try {
-                    Class<?> implCls = findClass(implClasses[i]);
-                    Class<?> ifaceCls = findClass(ifaceNames[i]);
-                    if (implCls == null || ifaceCls == null) continue;
-                    Constructor<?> ctor = implCls.getDeclaredConstructor();
-                    ctor.setAccessible(true);
-                    Object instance = ctor.newInstance();
-                    putMethod.invoke(null, ifaceCls, instance);
-                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] registered " + ifaceNames[i]);
-                } catch (Exception e) {
-                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] failed to register " + ifaceNames[i] + ": " + e);
-                }
-            }
-
-            Class<?> hostSvcMgr = findClass("com.kwai.theater.api.host.security.IHostSecurityService");
-            Class<?> hssmImpl = findClass("com.kwai.theater.api.component.security.HostSecurityServiceManager");
-            if (hostSvcMgr != null && hssmImpl != null) {
-                try {
-                    Method setUp = hssmImpl.getDeclaredMethod("setUp");
-                    setUp.setAccessible(true);
-                    setUp.invoke(null);
-                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] registered IHostSecurityService");
-                } catch (Exception e) {
-                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] failed IHostSecurityService: " + e);
-                }
-            }
-        } catch (Exception e) {
-            de.robv.android.xposed.XposedBridge.log("[xifan-sign] ensureProviders error: " + e);
+    private static String generateSigInput(String url, String body) {
+        Uri uri = Uri.parse(url);
+        String path = uri.getPath();
+        String query = uri.getQuery();
+        if (TextUtils.isEmpty(query)) {
+            return path + "&&" + body;
         }
+        String[] params = query.split("&");
+        Arrays.sort(params);
+        return path + "&" + TextUtils.join("&", params) + "&" + body;
     }
 
     private static String health() {
@@ -194,8 +157,6 @@ public class SignServer {
 
     private static String sign(String bodyJson) {
         try {
-            ensureProviders();
-
             JSONObject req = new JSONObject(bodyJson);
             String url = req.optString("url", "");
             String body = req.optString("body", "");
@@ -203,14 +164,11 @@ public class SignServer {
             Context ctx = getContext();
             HashMap<String, String> headers = new HashMap<>();
 
-            Class<?> encCls = findClass("com.kwai.theater.framework.network.core.encrypt.EncryptHelper");
+            headers.put("Ks-Encoding", "2");
+
+            String sigInput = generateSigInput(url, body);
+
             Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
-
-            if (encCls != null) {
-                Method addHeaders = encCls.getDeclaredMethod("addHeaderParams", Map.class);
-                addHeaders.invoke(null, headers);
-            }
-
             if (weaponCls != null) {
                 Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
                 Object kawObj = gMethod.invoke(null, ctx);
@@ -228,9 +186,28 @@ public class SignServer {
                 } catch (Exception ignored) {}
             }
 
-            if (encCls != null) {
-                Method sigMethod = encCls.getDeclaredMethod("sigRequest", String.class, Map.class, String.class);
-                sigMethod.invoke(null, url, headers, body);
+            boolean isSig3 = url.contains("/rest/e/tube/inspire");
+
+            if (isSig3) {
+                Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
+                if (kSecCls != null) {
+                    Method atlasSign = kSecCls.getDeclaredMethod("atlasSign", String.class);
+                    atlasSign.setAccessible(true);
+                    Object sig3Obj = atlasSign.invoke(null, sigInput);
+                    String sig3 = sig3Obj != null ? sig3Obj.toString() : "";
+                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] sig3 sigInput=" + sigInput.substring(0, Math.min(sigInput.length(), 80)) + " result=" + sig3.substring(0, Math.min(sig3.length(), 40)));
+                    if (sig3.length() > 0) headers.put("Ks-Sig3", sig3);
+                }
+            } else {
+                Class<?> sig1Cls = findClass("com.yxcorp.kuaishou.addfp.KWEGIDDFP");
+                if (sig1Cls != null) {
+                    Method doSign = sig1Cls.getDeclaredMethod("doSign", Context.class, String.class);
+                    doSign.setAccessible(true);
+                    Object sig1Obj = doSign.invoke(null, ctx, sigInput);
+                    String sig1 = sig1Obj != null ? sig1Obj.toString() : "";
+                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] sig1 sigInput=" + sigInput.substring(0, Math.min(sigInput.length(), 80)) + " result=" + sig1.substring(0, Math.min(sig1.length(), 40)) + " len=" + sig1.length());
+                    if (sig1.length() > 0) headers.put("Ks-Sig1", sig1);
+                }
             }
 
             JSONObject result = new JSONObject();
