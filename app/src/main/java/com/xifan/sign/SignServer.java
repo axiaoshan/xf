@@ -11,6 +11,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -23,6 +24,7 @@ public class SignServer {
     private static final int PORT = 2357;
     private static ServerSocket server;
     private static boolean running = false;
+    private static boolean providersReady = false;
 
     public static void start() {
         if (running) return;
@@ -123,28 +125,89 @@ public class SignServer {
         return path + "&" + TextUtils.join("&", params) + "&" + body;
     }
 
+    private static boolean checkProvider(String ifaceName) {
+        try {
+            Class<?> spCls = findClass("com.kwai.theater.framework.core.service.ServiceProvider");
+            Class<?> ifaceCls = findClass(ifaceName);
+            if (spCls == null || ifaceCls == null) return false;
+            Method getMethod = spCls.getDeclaredMethod("get", Class.class);
+            Object obj = getMethod.invoke(null, ifaceCls);
+            return obj != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private static void registerProviders() {
+        if (providersReady) return;
+        try {
+            Class<?> spCls = findClass("com.kwai.theater.framework.core.service.ServiceProvider");
+            if (spCls == null) return;
+            Method putMethod = spCls.getDeclaredMethod("put", Class.class, Object.class);
+
+            String[][] providers = {
+                {"com.kwai.theater.framework.core.service.provider.KsAdContext",
+                 "com.kwai.theater.component.base.core.KsAdSDKInit$KsAdContextImpl"},
+                {"com.kwai.theater.framework.core.service.provider.SecurityProvider",
+                 "com.kwai.theater.component.base.core.KsAdSDKInit$SecurityProviderImpl"},
+                {"com.kwai.theater.framework.core.service.provider.SdkConfigProvider",
+                 "com.kwai.theater.component.base.core.KsAdSDKInit$SdkConfigImpl"},
+            };
+
+            for (String[] pair : providers) {
+                if (checkProvider(pair[0])) continue;
+                try {
+                    Class<?> implCls = findClass(pair[1]);
+                    Class<?> ifaceCls = findClass(pair[0]);
+                    if (implCls == null || ifaceCls == null) continue;
+                    Constructor<?> ctor = implCls.getDeclaredConstructor();
+                    ctor.setAccessible(true);
+                    Object instance = ctor.newInstance();
+                    putMethod.invoke(null, ifaceCls, instance);
+                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] registered " + pair[0]);
+                } catch (Exception e) {
+                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] failed " + pair[0] + ": " + e);
+                }
+            }
+
+            if (!checkProvider("com.kwai.theater.api.host.security.IHostSecurityService")) {
+                try {
+                    Class<?> hssm = findClass("com.kwai.theater.api.component.security.HostSecurityServiceManager");
+                    if (hssm != null) {
+                        Method setUp = hssm.getDeclaredMethod("setUp");
+                        setUp.setAccessible(true);
+                        setUp.invoke(null);
+                        de.robv.android.xposed.XposedBridge.log("[xifan-sign] registered IHostSecurityService");
+                    }
+                } catch (Exception e) {
+                    de.robv.android.xposed.XposedBridge.log("[xifan-sign] failed IHostSecurityService: " + e);
+                }
+            }
+
+            try {
+                Class<?> hsm = findClass("com.kwai.theater.api.service.HostServiceManager");
+                if (hsm != null) {
+                }
+            } catch (Exception ignored) {}
+
+            providersReady = checkProvider("com.kwai.theater.framework.core.service.provider.KsAdContext")
+                          && checkProvider("com.kwai.theater.framework.core.service.provider.SecurityProvider");
+        } catch (Exception e) {
+            de.robv.android.xposed.XposedBridge.log("[xifan-sign] registerProviders error: " + e);
+        }
+    }
+
     private static String health() {
         try {
             Class<?> kSecCls = findClass("com.kuaishou.android.security.KSecurity");
             Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
-            Class<?> spCls = findClass("com.kwai.theater.framework.core.service.ServiceProvider");
-            Class<?> ksAdCtxCls = findClass("com.kwai.theater.framework.core.service.provider.KsAdContext");
 
             boolean kSecReady = false;
-            boolean sdkReady = false;
             String kaw = "";
 
             if (kSecCls != null) {
                 Method isInit = kSecCls.getDeclaredMethod("isInitialize");
                 kSecReady = (boolean) isInit.invoke(null);
-            }
-
-            if (spCls != null && ksAdCtxCls != null) {
-                try {
-                    Method getMethod = spCls.getDeclaredMethod("get", Class.class);
-                    Object obj = getMethod.invoke(null, ksAdCtxCls);
-                    sdkReady = obj != null;
-                } catch (Exception ignored) {}
             }
 
             Context ctx = getContext();
@@ -157,9 +220,8 @@ public class SignServer {
             }
 
             JSONObject obj = new JSONObject();
-            obj.put("ready", kSecReady && kaw.length() > 0 && sdkReady);
+            obj.put("ready", kSecReady && kaw.length() > 0);
             obj.put("kSecurity", kSecReady);
-            obj.put("sdkReady", sdkReady);
             obj.put("kaw", kaw);
             return obj.toString();
         } catch (Exception e) {
@@ -168,6 +230,65 @@ public class SignServer {
     }
 
     private static String sign(String bodyJson) {
+        try {
+            registerProviders();
+
+            JSONObject req = new JSONObject(bodyJson);
+            String url = req.optString("url", "");
+            String body = req.optString("body", "");
+
+            Context ctx = getContext();
+            HashMap<String, String> headers = new HashMap<>();
+
+            Class<?> encCls = findClass("com.kwai.theater.framework.network.core.encrypt.EncryptHelper");
+            Class<?> weaponCls = findClass("com.kuaishou.weapon.i.WeaponHI");
+
+            if (encCls != null) {
+                Method addHeaders = encCls.getDeclaredMethod("addHeaderParams", Map.class);
+                addHeaders.invoke(null, headers);
+            }
+
+            if (weaponCls != null) {
+                Method gMethod = weaponCls.getDeclaredMethod("g", Context.class);
+                Object kawObj = gMethod.invoke(null, ctx);
+                String kaw = kawObj != null ? kawObj.toString() : "";
+                if (kaw.length() > 0) headers.put("Kaw", kaw);
+
+                try {
+                    Method aMethod = weaponCls.getDeclaredMethod("a", String.class, String.class);
+                    aMethod.setAccessible(true);
+                    Object kasObj = aMethod.invoke(null, url + kaw, "");
+                    String kas = kasObj != null ? kasObj.toString() : "";
+                    if (kas.length() > 0) {
+                        headers.put("kas", kas);
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (encCls != null) {
+                Method sigMethod = encCls.getDeclaredMethod("sigRequest", String.class, Map.class, String.class);
+                sigMethod.invoke(null, url, headers, body);
+            }
+
+            JSONObject result = new JSONObject();
+            JSONObject hdrObj = new JSONObject();
+            for (Map.Entry<String, String> entry : headers.entrySet()) {
+                hdrObj.put(entry.getKey(), entry.getValue() != null ? entry.getValue() : "");
+            }
+            result.put("headers", hdrObj);
+            return result.toString();
+        } catch (Exception e) {
+            StringWriter sw = new StringWriter();
+            e.printStackTrace(new PrintWriter(sw));
+            try {
+                return signFallback(bodyJson, e);
+            } catch (Exception e2) {
+                return jsonError(500, "sign error: " + sw.toString() + " | fallback error: " + e2);
+            }
+        }
+    }
+
+    private static String signFallback(String bodyJson, Exception originalError) {
         try {
             JSONObject req = new JSONObject(bodyJson);
             String url = req.optString("url", "");
@@ -219,11 +340,11 @@ public class SignServer {
                 hdrObj.put(entry.getKey(), entry.getValue() != null ? entry.getValue() : "");
             }
             result.put("headers", hdrObj);
+            result.put("fallback", true);
+            result.put("original_error", originalError.toString());
             return result.toString();
         } catch (Exception e) {
-            StringWriter sw = new StringWriter();
-            e.printStackTrace(new PrintWriter(sw));
-            return jsonError(500, "sign error: " + sw.toString());
+            throw new RuntimeException(e);
         }
     }
 
