@@ -1,0 +1,9 @@
+{
+    "metadata": {
+        "name": "Xifan Sign",
+        "description": "签名服务",
+        "version": "1.0.0",
+        "author": "xifan",
+        "scope": ["com.kwai.theater"]
+    }
+}
