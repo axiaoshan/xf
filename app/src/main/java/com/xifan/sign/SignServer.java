@@ -220,6 +220,23 @@ public class SignServer {
                 }
             }
 
+            try {
+                Class<?> kSecHelperCls = findClass("com.kwai.theater.core.encrypt.KSecurityHelper");
+                if (kSecHelperCls != null) {
+                    Method isKxgs = kSecHelperCls.getDeclaredMethod("getIsKXGSAlreadyInitialized");
+                    Object kxgsReady = isKxgs.invoke(null);
+                    if (Boolean.TRUE.equals(kxgsReady)) {
+                        Uri uri4 = Uri.parse(url);
+                        String path4 = uri4.getPath();
+                        Method getSigFalcon = kSecHelperCls.getDeclaredMethod("getSigFalconWrapper", String.class, String.class);
+                        getSigFalcon.setAccessible(true);
+                        Object sig4Obj = getSigFalcon.invoke(null, path4, sigInput);
+                        String sig4 = sig4Obj != null ? sig4Obj.toString() : "";
+                        if (sig4.length() > 0) headers.put("ks-sig4", sig4);
+                    }
+                }
+            } catch (Exception ignored) {}
+
             JSONObject result = new JSONObject();
             JSONObject hdrObj = new JSONObject();
             for (Map.Entry<String, String> entry : headers.entrySet()) {
